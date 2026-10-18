@@ -2,10 +2,10 @@
 
 [![Latest Version](https://img.shields.io/badge/version-1.0.0-rose.svg)](https://packagist.org/packages/serverfy/sense)
 [![PHP Version](https://img.shields.io/badge/php-%5E8.1%7C%5E8.2%7C%5E8.3%7C%5E8.4-blue.svg)](https://php.net)
-[![Laravel Version](https://img.shields.io/badge/laravel-10.x%7C11.x%7C12.x-red.svg)](https://laravel.com)
+[![Laravel Version](https://img.shields.io/badge/laravel-10.x%7C11.x%7C12.x%7C13.x-red.svg)](https://laravel.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Serverfy Sense** is a zero-overhead Deep APM, Nightwatch-grade Waterfall Tracing, Error Tracking, and SRE bridge designed natively for Laravel 10, 11, and 12.
+**Serverfy Sense** is a zero-overhead Deep APM, Nightwatch-grade Waterfall Tracing, Error Tracking, and SRE bridge designed natively for Laravel 10, 11, 12, and 13.
 
 ---
 
