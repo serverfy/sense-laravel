@@ -1,0 +1,40 @@
+{
+    "name": "serverfy/sense",
+    "description": "Serverfy Sense - Zero-overhead Deep APM, Waterfall Tracing, Error Tracking and SRE bridge for Laravel",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Serverfy Core Team",
+            "email": "engineering@serverfy.io"
+        }
+    ],
+    "require": {
+        "php": "^8.2|^8.3|^8.4",
+        "illuminate/support": "^11.0|^12.0",
+        "illuminate/http": "^11.0|^12.0",
+        "illuminate/database": "^11.0|^12.0",
+        "monolog/monolog": "^3.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0",
+        "pestphp/pest": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Serverfy\\Sense\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Serverfy\\Sense\\SenseServiceProvider"
+            ],
+            "aliases": {
+                "Sense": "Serverfy\\Sense\\Facades\\Sense"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
