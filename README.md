@@ -14,7 +14,7 @@
 - **Microsecond Ingestion (< 0.1ms)**: Native support for local Unix Domain Sockets (`/run/serverfy/sense.sock`) powered by `serverfy-agent`.
 - **Nightwatch-Grade Visual Waterfall Tracing**: Complete anatomy of HTTP requests and Queue background jobs with parent-child correlation.
 - **Privacy by Design (LGPD / GDPR)**: Automatic recursive redaction of passwords, tokens, API keys, cookies, and SQL parameter literals (`?`).
-- **Sentinel AI Bridge**: Automatically flags slow queries (> 1000ms) and proposes index optimizations for supervised 1-click execution.
+- **Centurion AI Bridge**: Automatically flags slow queries (> 1000ms) and proposes index optimizations for supervised 1-click execution.
 - **Resilient Fallback**: Zero-impact non-blocking HTTP fallback if the local daemon socket is offline.
 
 ---
