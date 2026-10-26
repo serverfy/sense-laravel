@@ -26,6 +26,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Local Agent Loopback UDP Ingestion
+    |--------------------------------------------------------------------------
+    |
+    | For containerized or restricted environments without socket filesystem
+    | access, you can stream telemetry frames to the agent via UDP loopback.
+    | Set to 0 to disable UDP client transport.
+    |
+    */
+    'udp_host' => env('SERVERFY_SENSE_UDP_HOST', '127.0.0.1'),
+    'udp_port' => (int) env('SERVERFY_SENSE_UDP_PORT', 0),
+
+    /*
+    |--------------------------------------------------------------------------
     | HTTP Timeout
     |--------------------------------------------------------------------------
     |

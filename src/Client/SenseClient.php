@@ -16,6 +16,10 @@ class SenseClient
 
     protected ?string $socketPath;
 
+    protected string $udpHost;
+
+    protected int $udpPort;
+
     protected float $sampleRate;
 
     /**
@@ -30,11 +34,15 @@ class SenseClient
         ?string $dsn = null,
         int $timeout = 2,
         ?string $socketPath = null,
-        float $sampleRate = 1.0
+        float $sampleRate = 1.0,
+        ?string $udpHost = null,
+        ?int $udpPort = null
     ) {
         $dsn = $dsn ?? (string) config('sense.dsn', env('SERVERFY_SENSE_DSN', ''));
         $this->timeout = $timeout ?: (int) config('sense.timeout', 2);
         $this->socketPath = $socketPath ?? (config('sense.socket_path') ?: env('SERVERFY_SENSE_SOCKET'));
+        $this->udpHost = $udpHost ?? (string) (config('sense.udp_host') ?: env('SERVERFY_SENSE_UDP_HOST', '127.0.0.1'));
+        $this->udpPort = $udpPort ?? (int) (config('sense.udp_port') ?: env('SERVERFY_SENSE_UDP_PORT', 0));
         $this->sampleRate = $sampleRate ?: (float) config('sense.sample_rate', 1.0);
         $this->parseDsn($dsn);
     }
@@ -268,12 +276,32 @@ class SenseClient
 
                     return true;
                 }
-            } catch (Throwable $e) {
-                // Fall back silently to HTTP
+            } catch (Throwable) {
+                // Fall back to UDP or HTTP silently
             }
         }
 
-        // 2. HTTP Transport Fallback
+        // 2. Loopback UDP Ingestion Transport
+        if ($this->udpPort > 0) {
+            try {
+                $fp = @stream_socket_client("udp://{$this->udpHost}:{$this->udpPort}", $errno, $errstr, 0.05);
+                if ($fp) {
+                    $payloadWithKey = array_merge(['key' => $this->key], $payload);
+                    $encoded = json_encode($payloadWithKey);
+                    if (is_string($encoded) && strlen($encoded) <= 65507) {
+                        fwrite($fp, $encoded);
+                        fclose($fp);
+
+                        return true;
+                    }
+                    fclose($fp);
+                }
+            } catch (Throwable) {
+                // Fall back to HTTP silently
+            }
+        }
+
+        // 3. HTTP Transport Fallback
         try {
             $response = Http::timeout($this->timeout)
                 ->withHeaders([
