@@ -209,6 +209,22 @@ class TraceRecorder
         $this->spans = [];
     }
 
+    /**
+     * The last things that happened in the open trace, oldest first: what led up to an error.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function breadcrumbs(int $limit = 30): array
+    {
+        return array_map(fn (array $span) => array_filter([
+            'type' => $span['span_type'],
+            'message' => $span['query_sql'] ?? $span['name'],
+            'duration_ms' => $span['duration_ms'],
+            'at_ms' => $span['offset_ms'],
+            'failed' => $span['has_error'] ?? null,
+        ], fn ($value) => $value !== null), array_slice($this->spans, -$limit));
+    }
+
     /** Drop the open trace without sending it. */
     public function discard(): void
     {

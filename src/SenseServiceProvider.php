@@ -95,15 +95,18 @@ class SenseServiceProvider extends ServiceProvider
      */
     protected function exceptionContext(): array
     {
+        $breadcrumbs = $this->app->make(TraceRecorder::class)->breadcrumbs();
+        $context = $breadcrumbs ? ['breadcrumbs' => $breadcrumbs] : [];
+
         if ($this->app->runningInConsole() || ! $this->app->bound('request')) {
-            return [];
+            return $context;
         }
 
         $request = $this->app->make('request');
         $client = $this->app->make(SenseClient::class);
         $route = $request->route();
 
-        $context = [
+        $context += [
             'request' => [
                 'url' => $request->url(),
                 'method' => $request->method(),
