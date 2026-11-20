@@ -19,7 +19,8 @@ class SenseMonologHandler extends AbstractProcessingHandler
 
     protected function write(LogRecord $record): void
     {
-        if (! $this->client->isConfigured()) {
+        // Lines written while a batch is on the wire come from the transport itself.
+        if (! $this->client->isConfigured() || $this->client->isSending()) {
             return;
         }
 
@@ -27,7 +28,8 @@ class SenseMonologHandler extends AbstractProcessingHandler
             level: $record->level->name,
             message: $record->message,
             context: $record->context,
-            extra: $record->extra
+            extra: $record->extra,
+            channel: $record->channel
         );
     }
 }

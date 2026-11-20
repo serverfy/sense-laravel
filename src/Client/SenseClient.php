@@ -3,11 +3,22 @@
 namespace Serverfy\Sense\Client;
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
+use Serverfy\Sense\Support\ExceptionPayload;
 use Throwable;
 
+/**
+ * Collects telemetry during a request, job or command and sends it in one batch at the end.
+ *
+ * Nothing here may ever break the host application: every transport failure is swallowed.
+ */
 class SenseClient
 {
+    /** Items per kind kept in memory before a flush is forced. */
+    public const DEFAULT_BATCH_SIZE = 100;
+
+    /** Largest JSON body sent in one request. The ingest endpoint refuses bodies over 1 MiB. */
+    public const MAX_PAYLOAD_BYTES = 900_000;
+
     protected string $endpoint;
 
     protected ?string $key;
@@ -21,6 +32,12 @@ class SenseClient
     protected int $udpPort;
 
     protected float $sampleRate;
+
+    /** @var array{exceptions: list<array<string, mixed>>, logs: list<array<string, mixed>>, spans: list<array<string, mixed>>, traces: list<array<string, mixed>>} */
+    protected array $buffer = ['exceptions' => [], 'logs' => [], 'spans' => [], 'traces' => []];
+
+    /** True while a batch is on the wire, so the client never instruments its own traffic. */
+    protected bool $sending = false;
 
     /**
      * @var array{trace_id: ?string, parent_trace_id: ?string}
@@ -38,12 +55,12 @@ class SenseClient
         ?string $udpHost = null,
         ?int $udpPort = null
     ) {
-        $dsn = $dsn ?? (string) config('sense.dsn', env('SERVERFY_SENSE_DSN', ''));
+        $dsn = $dsn ?? (string) config('sense.dsn', '');
         $this->timeout = $timeout ?: (int) config('sense.timeout', 2);
-        $this->socketPath = $socketPath ?? (config('sense.socket_path') ?: env('SERVERFY_SENSE_SOCKET'));
-        $this->udpHost = $udpHost ?? (string) (config('sense.udp_host') ?: env('SERVERFY_SENSE_UDP_HOST', '127.0.0.1'));
-        $this->udpPort = $udpPort ?? (int) (config('sense.udp_port') ?: env('SERVERFY_SENSE_UDP_PORT', 0));
-        $this->sampleRate = $sampleRate ?: (float) config('sense.sample_rate', 1.0);
+        $this->socketPath = $socketPath ?? (config('sense.socket_path') ?: null);
+        $this->udpHost = $udpHost ?? (string) (config('sense.udp_host') ?: '127.0.0.1');
+        $this->udpPort = $udpPort ?? (int) config('sense.udp_port', 0);
+        $this->sampleRate = max(0.0, min(1.0, $sampleRate));
         $this->parseDsn($dsn);
     }
 
@@ -86,6 +103,17 @@ class SenseClient
         return $this->key;
     }
 
+    public function sampleRate(): float
+    {
+        return $this->sampleRate;
+    }
+
+    /** True while the client is sending a batch; instrumentation must stay quiet meanwhile. */
+    public function isSending(): bool
+    {
+        return $this->sending;
+    }
+
     public static function setTraceContext(?string $traceId, ?string $parentTraceId = null): void
     {
         static::$traceContext = [
@@ -103,9 +131,9 @@ class SenseClient
     }
 
     /**
-     * Send an exception to Serverfy Sense.
+     * Queue an exception for delivery. Exceptions are never sampled out.
      *
-     * @param  array<string, mixed>  $context
+     * @param  array<string, mixed>  $context  Extra keys merged into the item (request, user, severity...).
      */
     public function captureException(Throwable $e, array $context = []): bool
     {
@@ -113,62 +141,41 @@ class SenseClient
             return false;
         }
 
-        $frames = [];
-        foreach (array_slice($e->getTrace(), 0, 20) as $trace) {
-            $frames[] = [
-                'file' => $trace['file'] ?? '[internal]',
-                'line' => $trace['line'] ?? 0,
-                'function' => ($trace['class'] ?? '').($trace['type'] ?? '').$trace['function'],
-            ];
+        try {
+            $item = array_merge(ExceptionPayload::from($e), $this->scrubPii($context));
+            $item['trace_id'] ??= static::$traceContext['trace_id'];
+        } catch (Throwable) {
+            return false;
         }
 
-        $payload = [
-            'events' => [
-                array_merge([
-                    'title' => get_class($e).': '.$e->getMessage(),
-                    'exception_class' => get_class($e),
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'severity' => 'error',
-                    'stack_trace' => $frames,
-                    'timestamp' => now()->toIso8601String(),
-                ], $this->scrubPii($context)),
-            ],
-        ];
-
-        return $this->dispatch($payload);
+        return $this->push('exceptions', $item);
     }
 
     /**
-     * Send a single log line to Serverfy Sense.
+     * Queue a single log line.
      *
      * @param  array<string, mixed>  $context
      * @param  array<string, mixed>  $extra
      */
-    public function captureLog(string $level, string $message, array $context = [], array $extra = []): bool
+    public function captureLog(string $level, string $message, array $context = [], array $extra = [], ?string $channel = null): bool
     {
         if (! $this->isConfigured()) {
             return false;
         }
 
-        $payload = [
-            'logs' => [
-                [
-                    'level' => strtolower($level),
-                    'message' => $message,
-                    'context' => $this->scrubPii($context),
-                    'extra' => $this->scrubPii($extra),
-                    'timestamp' => now()->toIso8601String(),
-                ],
-            ],
-        ];
-
-        return $this->dispatch($payload);
+        return $this->push('logs', [
+            'level' => strtolower($level),
+            'channel' => $channel ?? 'laravel',
+            'message' => $message,
+            'context' => $this->scrubPii($this->plain($context)),
+            'extra' => $this->scrubPii($this->plain($extra)),
+            'environment' => $this->environment(),
+            'logged_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ]);
     }
 
     /**
-     * Send an APM performance span.
+     * Queue a standalone performance measurement (something timed outside of a trace).
      *
      * @param  array<string, mixed>  $meta
      */
@@ -178,23 +185,22 @@ class SenseClient
             return false;
         }
 
-        $payload = [
-            'spans' => [
-                [
-                    'type' => $type,
-                    'name' => $name,
-                    'duration_ms' => $durationMs,
-                    'meta' => $this->scrubPii($meta),
-                    'timestamp' => now()->toIso8601String(),
-                ],
-            ],
-        ];
+        $meta = $this->scrubPii($meta);
 
-        return $this->dispatch($payload);
+        return $this->push('spans', array_filter([
+            'type' => $type,
+            'name' => $name,
+            'duration_ms' => $durationMs,
+            'status_code' => isset($meta['status_code']) ? (int) $meta['status_code'] : null,
+            'query_sql' => isset($meta['sql']) ? (string) $meta['sql'] : null,
+            'metadata' => $meta,
+            'environment' => $this->environment(),
+            'recorded_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ], fn ($value) => $value !== null));
     }
 
     /**
-     * Send a full waterfall trace with nested spans to Serverfy Sense.
+     * Queue a full trace with its spans.
      *
      * @param  array<string, mixed>  $trace
      */
@@ -203,6 +209,18 @@ class SenseClient
         if (! $this->isConfigured()) {
             return false;
         }
+
+        // Older callers named the trace with "context_name".
+        if (! isset($trace['name']) && isset($trace['context_name'])) {
+            $trace['name'] = $trace['context_name'];
+        }
+        unset($trace['context_name']);
+
+        if (isset($trace['context_type'])) {
+            $trace['context_type'] = strtolower((string) $trace['context_type']);
+        }
+
+        $trace['environment'] ??= $this->environment();
 
         if (isset($trace['context_data']) && is_array($trace['context_data'])) {
             $trace['context_data'] = $this->scrubPii($trace['context_data']);
@@ -220,22 +238,18 @@ class SenseClient
             unset($span);
         }
 
-        $payload = [
-            'traces' => [$trace],
-        ];
-
-        return $this->dispatch($payload);
+        return $this->push('traces', $trace);
     }
 
     /**
      * Scrub PII and sensitive keys recursively.
      *
-     * @param  array<string, mixed>  $data
-     * @return array<string, mixed>
+     * @param  array<array-key, mixed>  $data
+     * @return array<array-key, mixed>
      */
     public function scrubPii(array $data): array
     {
-        $sensitivePattern = '/password|token|secret|key|authorization|bearer|cookie|card|cvv|ssn/i';
+        $sensitivePattern = '/password|passwd|token|secret|key|authorization|bearer|cookie|card|cvv|ssn|signature/i';
 
         foreach ($data as $key => $val) {
             if (is_string($key) && preg_match($sensitivePattern, $key)) {
@@ -249,7 +263,7 @@ class SenseClient
     }
 
     /**
-     * Redact SQL literals and sensitive parameters.
+     * Redact SQL literals and long numbers.
      */
     public function scrubSql(string $sql): string
     {
@@ -259,64 +273,205 @@ class SenseClient
     }
 
     /**
-     * Dispatch payload via zero-overhead local daemon socket or HTTP.
+     * Send everything collected so far. Safe to call at any time, any number of times.
+     */
+    public function flush(): bool
+    {
+        if ($this->sending || ! $this->isConfigured()) {
+            return false;
+        }
+
+        $buffer = array_filter($this->buffer);
+        $this->buffer = ['exceptions' => [], 'logs' => [], 'spans' => [], 'traces' => []];
+
+        if ($buffer === []) {
+            return true;
+        }
+
+        $delivered = true;
+
+        foreach ($this->chunk($buffer) as $payload) {
+            $delivered = $this->dispatch($payload) && $delivered;
+        }
+
+        return $delivered;
+    }
+
+    /** How many items are waiting to be sent. */
+    public function pending(): int
+    {
+        return array_sum(array_map('count', $this->buffer));
+    }
+
+    /**
+     * Dispatch one payload: local agent socket, then loopback UDP, then HTTP.
      *
      * @param  array<string, mixed>  $payload
      */
     public function dispatch(array $payload): bool
     {
-        // 1. Zero-Overhead Local Daemon Transport (Unix Domain Socket)
-        if (! empty($this->socketPath) && file_exists($this->socketPath)) {
-            try {
-                $fp = @stream_socket_client("unix://{$this->socketPath}", $errno, $errstr, 0.05);
-                if ($fp) {
-                    $payloadWithKey = array_merge(['key' => $this->key], $payload);
-                    fwrite($fp, json_encode($payloadWithKey));
-                    fclose($fp);
-
-                    return true;
-                }
-            } catch (Throwable) {
-                // Fall back to UDP or HTTP silently
-            }
-        }
-
-        // 2. Loopback UDP Ingestion Transport
-        if ($this->udpPort > 0) {
-            try {
-                $fp = @stream_socket_client("udp://{$this->udpHost}:{$this->udpPort}", $errno, $errstr, 0.05);
-                if ($fp) {
-                    $payloadWithKey = array_merge(['key' => $this->key], $payload);
-                    $encoded = json_encode($payloadWithKey);
-                    if (is_string($encoded) && strlen($encoded) <= 65507) {
-                        fwrite($fp, $encoded);
-                        fclose($fp);
-
-                        return true;
-                    }
-                    fclose($fp);
-                }
-            } catch (Throwable) {
-                // Fall back to HTTP silently
-            }
-        }
-
-        // 3. HTTP Transport Fallback
-        try {
-            $response = Http::timeout($this->timeout)
-                ->withHeaders([
-                    'X-Serverfy-Key' => $this->key,
-                    'Accept' => 'application/json',
-                    'Content-Type' => 'application/json',
-                    'User-Agent' => 'Serverfy-Sense-SDK/1.0',
-                ])
-                ->post($this->endpoint, $payload);
-
-            return $response->successful();
-        } catch (Throwable $e) {
-            Log::debug('Serverfy Sense Client dispatch failed: '.$e->getMessage());
-
+        if ($this->sending) {
             return false;
         }
+
+        $this->sending = true;
+
+        try {
+            return $this->transport($payload);
+        } catch (Throwable) {
+            return false;
+        } finally {
+            $this->sending = false;
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    protected function transport(array $payload): bool
+    {
+        $encoded = json_encode(
+            array_merge(['key' => $this->key], $payload),
+            JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_SLASHES
+        );
+
+        if (! is_string($encoded)) {
+            return false;
+        }
+
+        // 1. Local agent over a Unix domain socket
+        if (! empty($this->socketPath) && file_exists($this->socketPath)) {
+            $fp = @stream_socket_client("unix://{$this->socketPath}", $errno, $errstr, 0.05);
+            if ($fp) {
+                $written = @fwrite($fp, $encoded);
+                fclose($fp);
+
+                if ($written === strlen($encoded)) {
+                    return true;
+                }
+            }
+        }
+
+        // 2. Local agent over loopback UDP (one datagram at most)
+        if ($this->udpPort > 0 && strlen($encoded) <= 65507) {
+            $fp = @stream_socket_client("udp://{$this->udpHost}:{$this->udpPort}", $errno, $errstr, 0.05);
+            if ($fp) {
+                $written = @fwrite($fp, $encoded);
+                fclose($fp);
+
+                if ($written === strlen($encoded)) {
+                    return true;
+                }
+            }
+        }
+
+        // 3. HTTPS straight to the ingest endpoint
+        $body = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        if (! is_string($body)) {
+            return false;
+        }
+
+        $headers = [
+            'X-Serverfy-Key' => (string) $this->key,
+            'Accept' => 'application/json',
+            'User-Agent' => 'Serverfy-Sense-SDK/2.0',
+        ];
+
+        if (strlen($body) > 2048 && function_exists('gzencode') && ($gz = gzencode($body, 6)) !== false) {
+            $body = $gz;
+            $headers['Content-Encoding'] = 'gzip';
+        }
+
+        return Http::timeout($this->timeout)
+            ->connectTimeout(1)
+            ->withHeaders($headers)
+            ->withBody($body, 'application/json')
+            ->post($this->endpoint)
+            ->successful();
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    protected function push(string $kind, array $item): bool
+    {
+        $this->buffer[$kind][] = $item;
+
+        if (count($this->buffer[$kind]) >= (int) config('sense.batch_size', self::DEFAULT_BATCH_SIZE)) {
+            $this->flush();
+        }
+
+        return true;
+    }
+
+    /**
+     * Split a buffer into payloads small enough for the ingest endpoint.
+     *
+     * @param  array<string, list<array<string, mixed>>>  $buffer
+     * @return list<array<string, mixed>>
+     */
+    protected function chunk(array $buffer): array
+    {
+        $payloads = [];
+        $current = [];
+        $size = 0;
+
+        foreach ($buffer as $kind => $items) {
+            foreach ($items as $item) {
+                $bytes = strlen((string) json_encode($item, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR));
+
+                // A single item that could never fit is dropped rather than poisoning the batch.
+                if ($bytes > self::MAX_PAYLOAD_BYTES) {
+                    continue;
+                }
+
+                if ($size + $bytes > self::MAX_PAYLOAD_BYTES && $current !== []) {
+                    $payloads[] = $current;
+                    $current = [];
+                    $size = 0;
+                }
+
+                $current[$kind][] = $item;
+                $size += $bytes;
+            }
+        }
+
+        if ($current !== []) {
+            $payloads[] = $current;
+        }
+
+        return $payloads;
+    }
+
+    /**
+     * Reduce arbitrary log context to JSON-safe scalars and arrays of bounded size.
+     *
+     * @param  array<array-key, mixed>  $data
+     * @return array<array-key, mixed>
+     */
+    protected function plain(array $data, int $depth = 0): array
+    {
+        $out = [];
+
+        foreach (array_slice($data, 0, 50, true) as $key => $value) {
+            if ($value instanceof Throwable) {
+                $out[$key] = get_class($value).': '.$value->getMessage();
+            } elseif (is_array($value)) {
+                $out[$key] = $depth >= 4 ? '[…]' : $this->plain($value, $depth + 1);
+            } elseif (is_object($value)) {
+                $out[$key] = method_exists($value, '__toString') ? mb_strcut((string) $value, 0, 2000) : get_class($value);
+            } elseif (is_string($value)) {
+                $out[$key] = mb_strcut($value, 0, 2000);
+            } elseif (is_scalar($value) || $value === null) {
+                $out[$key] = $value;
+            }
+        }
+
+        return $out;
+    }
+
+    protected function environment(): string
+    {
+        return (string) (config('sense.environment') ?: config('app.env', 'production'));
     }
 }

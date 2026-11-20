@@ -27,7 +27,7 @@ class SenseTestCommand extends Command
         $startTime = microtime(true);
 
         // Test Span
-        $success = $client->captureSpan(
+        $client->captureSpan(
             type: 'custom',
             name: 'artisan sense:test verification',
             durationMs: 12.34,
@@ -37,6 +37,8 @@ class SenseTestCommand extends Command
                 'environment' => app()->environment(),
             ]
         );
+
+        $success = $client->flush();
 
         $elapsed = round((microtime(true) - $startTime) * 1000, 2);
 

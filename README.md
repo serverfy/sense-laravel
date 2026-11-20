@@ -1,21 +1,11 @@
 # 📡 Serverfy Sense - Laravel SDK
 
-[![Latest Version](https://img.shields.io/badge/version-1.0.0-rose.svg)](https://packagist.org/packages/serverfy/sense)
+[![Latest Version](https://img.shields.io/badge/version-2.0.0-rose.svg)](https://packagist.org/packages/serverfy/sense)
 [![PHP Version](https://img.shields.io/badge/php-%5E8.1%7C%5E8.2%7C%5E8.3%7C%5E8.4-blue.svg)](https://php.net)
 [![Laravel Version](https://img.shields.io/badge/laravel-10.x%7C11.x%7C12.x%7C13.x-red.svg)](https://laravel.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Serverfy Sense** is a zero-overhead Deep APM, Nightwatch-grade Waterfall Tracing, Error Tracking, and SRE bridge designed natively for Laravel 10, 11, 12, and 13.
-
----
-
-## ⚡ Features
-
-- **Microsecond Ingestion (< 0.1ms)**: Native support for local Unix Domain Sockets (`/run/serverfy/sense.sock`) powered by `serverfy-agent`.
-- **Nightwatch-Grade Visual Waterfall Tracing**: Complete anatomy of HTTP requests and Queue background jobs with parent-child correlation.
-- **Privacy by Design (LGPD / GDPR)**: Automatic recursive redaction of passwords, tokens, API keys, cookies, and SQL parameter literals (`?`).
-- **Centurion AI Bridge**: Automatically flags slow queries (> 1000ms) and proposes index optimizations for supervised 1-click execution.
-- **Resilient Fallback**: Zero-impact non-blocking HTTP fallback if the local daemon socket is offline.
+**Serverfy Sense** records errors, request traces, queries, queued jobs and scheduled tasks of a Laravel 10, 11, 12 or 13 application and sends them to your Serverfy console.
 
 ---
 
@@ -37,20 +27,25 @@ php artisan vendor:publish --tag="sense-config"
 
 ## ⚙️ Configuration
 
-Add your Data Source Name (DSN) to `.env`:
+Add the DSN of your site (Serverfy console, Site > Sense > Setup) to `.env`:
 
 ```env
-SERVERFY_SENSE_DSN="https://console.serverfy.io/api/v1/telemetry?key=sfy_live_your_site_key"
-SERVERFY_SENSE_SOCKET="/run/serverfy/sense.sock"
-SERVERFY_SENSE_APM_ENABLED=true
-SERVERFY_SENSE_SLOW_QUERY_THRESHOLD=100
+SERVERFY_SENSE_DSN="https://your-serverfy-host/api/v1/telemetry?key=sfy_live_your_site_key"
+```
+
+That is the whole setup. Optional settings:
+
+```env
+SERVERFY_SENSE_SAMPLE_RATE=0.2          # store one in five traces; failures are always stored
+SERVERFY_SENSE_RELEASE="${GIT_COMMIT}"  # label errors with the deploy they came from
+SERVERFY_SENSE_ENVIRONMENT=production
+SERVERFY_SENSE_SOCKET="/run/serverfy/sense.sock"  # local agent, when the server runs one
+SERVERFY_SENSE_SEND_REQUEST_BODY=false  # request bodies are not sent unless you opt in
 ```
 
 ---
 
 ## 🧪 Testing Connectivity
-
-Run the built-in diagnostic command:
 
 ```bash
 php artisan sense:test
@@ -58,60 +53,62 @@ php artisan sense:test
 
 ---
 
-## 📖 Usage
+## 📖 What is recorded
 
-### Automatic Tracking
-The service provider automatically hooks into:
-1. HTTP Middleware (measuring $p50, p95, p99$ response times and status codes).
-2. Database Query Listener (capturing queries that exceed `slow_query_threshold`).
+Once the DSN is set, with no code changes:
 
-### Manual Exception Capture
+| What | How it shows up |
+| --- | --- |
+| HTTP requests | One trace per request, named after the route pattern (`GET /orders/{order}`) |
+| Database queries | Spans inside the trace; slow queries are also reported outside of traces |
+| Queued jobs | One trace per job, linked to the request that dispatched it |
+| Artisan commands and scheduled tasks | One trace each (long-running workers are skipped) |
+| Cache reads and writes, outgoing HTTP calls | Spans inside the current trace |
+| Reported exceptions | Stack trace, source lines around the failure, request and user id |
+
+Telemetry is collected in memory and sent in one compressed batch after the response has gone
+out, so a request never waits for it. A failure to deliver is silent and never reaches your
+application.
+
+### Privacy
+
+Values of keys that look like credentials (`password`, `token`, `secret`, `authorization`,
+`cookie`, card data) are replaced before anything leaves the server, SQL is sent with its
+placeholders and never with bound values, outgoing HTTP calls are recorded without their query
+string, and request bodies are only sent when you opt in.
+
+### Sampling
+
+`SERVERFY_SENSE_SAMPLE_RATE` controls how many traces are stored in full. Failed requests and
+jobs are always sent, and every sampled trace carries the weight of the ones left out, so
+request counts, error rates and percentiles in Sense stay accurate.
+
+### Application logs
+
 ```php
-use Serverfy\Sense\Facades\Sense;
-
-try {
-    // business logic
-} catch (\Throwable $e) {
-    Sense::captureException($e, [
-        'user_id' => auth()->id(),
-        'order_id' => $order->id,
-    ]);
-}
+// config/logging.php
+'sense' => [
+    'driver' => 'monolog',
+    'handler' => \Serverfy\Sense\Logging\SenseMonologHandler::class,
+    'level' => 'warning',
+],
 ```
 
-### Manual Performance Spans
-```php
-use Serverfy\Sense\Facades\Sense;
-
-Sense::captureSpan(
-    type: 'external_api',
-    name: 'Stripe API /charges',
-    durationMs: 142.5,
-    meta: ['status' => 200]
-);
+```env
+LOG_STACK=single,sense
 ```
 
-### Full Waterfall Traces & Queue Correlation
+### Manual capture
+
 ```php
 use Serverfy\Sense\Facades\Sense;
+use Serverfy\Sense\Tracing\TraceRecorder;
 
-// Pass trace context across queue jobs
-Sense::setTraceContext($traceId, $parentId);
+// An exception you caught yourself
+Sense::captureException($e, ['user' => ['id' => auth()->id()]]);
 
-Sense::captureTrace([
-    'trace_id' => $traceId,
-    'context_type' => 'HTTP',
-    'context_name' => 'POST /api/v1/checkout',
-    'duration_ms' => 312.4,
-    'spans' => [
-        [
-            'type' => 'db',
-            'name' => 'SELECT * FROM users WHERE id = ?',
-            'duration_ms' => 4.2,
-            'offset_ms' => 12.0,
-        ],
-    ],
-]);
+// Time a block of code as a span of the current trace
+app(TraceRecorder::class)->measure('render invoice pdf', fn () => $pdf->render());
 ```
 
 ---

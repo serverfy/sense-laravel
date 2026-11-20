@@ -7,9 +7,11 @@ use Serverfy\Sense\Client\SenseClient;
 
 /**
  * @method static bool captureException(\Throwable $e, array $context = [])
- * @method static bool captureLog(string $level, string $message, array $context = [], array $extra = [])
+ * @method static bool captureLog(string $level, string $message, array $context = [], array $extra = [], ?string $channel = null)
  * @method static bool captureSpan(string $type, string $name, float $durationMs, array $meta = [])
  * @method static bool captureTrace(array $trace)
+ * @method static bool flush()
+ * @method static int pending()
  * @method static void setTraceContext(?string $traceId, ?string $parentTraceId = null)
  * @method static array getTraceContext()
  * @method static bool isConfigured()
