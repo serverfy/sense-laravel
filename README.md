@@ -1,6 +1,6 @@
 # 📡 Serverfy Sense - Laravel SDK
 
-[![Latest Version](https://img.shields.io/badge/version-2.0.0-rose.svg)](https://packagist.org/packages/serverfy/sense)
+[![Latest Version](https://img.shields.io/badge/version-2.3.0-rose.svg)](https://packagist.org/packages/serverfy/sense)
 [![PHP Version](https://img.shields.io/badge/php-%5E8.1%7C%5E8.2%7C%5E8.3%7C%5E8.4-blue.svg)](https://php.net)
 [![Laravel Version](https://img.shields.io/badge/laravel-10.x%7C11.x%7C12.x%7C13.x-red.svg)](https://laravel.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -39,7 +39,6 @@ That is the whole setup. Optional settings:
 SERVERFY_SENSE_SAMPLE_RATE=0.2          # store one in five traces; failures are always stored
 SERVERFY_SENSE_RELEASE="${GIT_COMMIT}"  # label errors with the deploy they came from
 SERVERFY_SENSE_ENVIRONMENT=production
-SERVERFY_SENSE_SOCKET="/run/serverfy/sense.sock"  # local agent, when the server runs one
 SERVERFY_SENSE_SEND_REQUEST_BODY=false  # request bodies are not sent unless you opt in
 ```
 
@@ -97,6 +96,21 @@ request counts, error rates and percentiles in Sense stay accurate.
 ```env
 LOG_STACK=single,sense
 ```
+
+### Local agent (optional)
+
+On a busy site, run the agent next to the application and telemetry stops costing a network
+call per request: the application hands it over a local socket and the agent forwards
+everything in batches.
+
+```bash
+php artisan sense:agent
+```
+
+Keep it running with Supervisor or systemd, as the same user that runs the application. No
+configuration is needed: the SDK finds the agent on `storage/framework/sense.sock` and falls
+back to sending directly whenever the agent is not there. `php artisan sense:agent --ping`
+tells you whether it is up.
 
 ### Your own metrics
 

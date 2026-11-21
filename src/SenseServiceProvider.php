@@ -7,6 +7,7 @@ use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use Serverfy\Sense\Client\SenseClient;
+use Serverfy\Sense\Console\Commands\SenseAgentCommand;
 use Serverfy\Sense\Console\Commands\SenseTestCommand;
 use Serverfy\Sense\Http\Middleware\SenseApmMiddleware;
 use Serverfy\Sense\Tracing\TraceRecorder;
@@ -41,6 +42,7 @@ class SenseServiceProvider extends ServiceProvider
 
             $this->commands([
                 SenseTestCommand::class,
+                SenseAgentCommand::class,
             ]);
         }
 

@@ -40,15 +40,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Local Agent Unix Domain Socket Path
+    | Local Agent Socket
     |--------------------------------------------------------------------------
     |
-    | If your server runs the local `serverfy-agent` daemon, telemetry spans
-    | are dispatched in microseconds (< 0.1ms) via this Unix socket.
-    | If the socket is unavailable, it falls back to HTTP automatically.
+    | When `php artisan sense:agent` is running next to the application,
+    | telemetry is handed to it over this socket and it forwards everything in
+    | batches, so requests never wait for the network. Leave it empty to use
+    | storage/framework/sense.sock. Without an agent, telemetry goes straight
+    | to Serverfy over HTTPS after the response has been sent.
     |
     */
-    'socket_path' => env('SERVERFY_SENSE_SOCKET', '/run/serverfy/sense.sock'),
+    'socket_path' => env('SERVERFY_SENSE_SOCKET'),
 
     /*
     |--------------------------------------------------------------------------

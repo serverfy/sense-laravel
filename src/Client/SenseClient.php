@@ -57,7 +57,7 @@ class SenseClient
     ) {
         $dsn = $dsn ?? (string) config('sense.dsn', '');
         $this->timeout = $timeout ?: (int) config('sense.timeout', 2);
-        $this->socketPath = $socketPath ?? (config('sense.socket_path') ?: null);
+        $this->socketPath = $socketPath ?? ((config('sense.socket_path') ?: null) ?? self::defaultSocketPath());
         $this->udpHost = $udpHost ?? (string) (config('sense.udp_host') ?: '127.0.0.1');
         $this->udpPort = $udpPort ?? (int) config('sense.udp_port', 0);
         $this->sampleRate = max(0.0, min(1.0, $sampleRate));
@@ -86,6 +86,15 @@ class SenseClient
 
         $this->endpoint = "{$scheme}://{$host}{$port}{$path}";
         $this->key = $query['key'] ?? null;
+    }
+
+    /**
+     * Where the local agent listens when nothing else is configured: inside the application's
+     * own storage, which the user running the application can always write to.
+     */
+    public static function defaultSocketPath(): string
+    {
+        return function_exists('storage_path') ? storage_path('framework/sense.sock') : sys_get_temp_dir().'/sense.sock';
     }
 
     public function isConfigured(): bool
@@ -396,7 +405,7 @@ class SenseClient
         $headers = [
             'X-Serverfy-Key' => (string) $this->key,
             'Accept' => 'application/json',
-            'User-Agent' => 'Serverfy-Sense-SDK/2.2',
+            'User-Agent' => 'Serverfy-Sense-SDK/2.3',
         ];
 
         if (strlen($body) > 2048 && function_exists('gzencode') && ($gz = gzencode($body, 6)) !== false) {

@@ -37,7 +37,7 @@ class Instrumentation
     public const IGNORED_COMMANDS = [
         'queue:work', 'queue:listen', 'queue:restart', 'horizon', 'horizon:work', 'horizon:supervisor',
         'schedule:run', 'schedule:work', 'schedule:finish', 'octane:start', 'octane:reload', 'reverb:start',
-        'pulse:work', 'pulse:check', 'serve', 'tinker', 'sense:test', 'package:discover', 'vendor:publish',
+        'pulse:work', 'pulse:check', 'serve', 'tinker', 'sense:test', 'sense:agent', 'package:discover', 'vendor:publish',
         'list', 'help', 'serverfy:sense-agent',
     ];
 
