@@ -33,8 +33,8 @@ class SenseClient
 
     protected float $sampleRate;
 
-    /** @var array{exceptions: list<array<string, mixed>>, logs: list<array<string, mixed>>, spans: list<array<string, mixed>>, traces: list<array<string, mixed>>} */
-    protected array $buffer = ['exceptions' => [], 'logs' => [], 'spans' => [], 'traces' => []];
+    /** @var array<string, list<array<string, mixed>>> */
+    protected array $buffer = ['exceptions' => [], 'logs' => [], 'spans' => [], 'traces' => [], 'metrics' => []];
 
     /** True while a batch is on the wire, so the client never instruments its own traffic. */
     protected bool $sending = false;
@@ -200,6 +200,28 @@ class SenseClient
     }
 
     /**
+     * Record a number that matters to your business or your system: an order paid, the size
+     * of an upload, how long an import took. Sense keeps the count, total, average and
+     * percentiles per minute, and alert rules can watch them.
+     *
+     * The name identifies the metric and must be stable: letters, digits, dot, dash,
+     * underscore and colon ("orders.paid", "import:duration_ms"). Never put ids in it.
+     */
+    public function metric(string $name, float|int $value = 1): bool
+    {
+        if (! $this->isConfigured() || ! preg_match('/^[A-Za-z0-9_.:\-]{1,100}$/', $name) || ! is_finite((float) $value)) {
+            return false;
+        }
+
+        return $this->push('metrics', [
+            'name' => $name,
+            'value' => (float) $value,
+            'environment' => $this->environment(),
+            'recorded_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ]);
+    }
+
+    /**
      * Queue a full trace with its spans.
      *
      * @param  array<string, mixed>  $trace
@@ -282,7 +304,7 @@ class SenseClient
         }
 
         $buffer = array_filter($this->buffer);
-        $this->buffer = ['exceptions' => [], 'logs' => [], 'spans' => [], 'traces' => []];
+        $this->buffer = ['exceptions' => [], 'logs' => [], 'spans' => [], 'traces' => [], 'metrics' => []];
 
         if ($buffer === []) {
             return true;
@@ -374,7 +396,7 @@ class SenseClient
         $headers = [
             'X-Serverfy-Key' => (string) $this->key,
             'Accept' => 'application/json',
-            'User-Agent' => 'Serverfy-Sense-SDK/2.0',
+            'User-Agent' => 'Serverfy-Sense-SDK/2.2',
         ];
 
         if (strlen($body) > 2048 && function_exists('gzencode') && ($gz = gzencode($body, 6)) !== false) {

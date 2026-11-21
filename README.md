@@ -98,6 +98,19 @@ request counts, error rates and percentiles in Sense stay accurate.
 LOG_STACK=single,sense
 ```
 
+### Your own metrics
+
+```php
+use Serverfy\Sense\Facades\Sense;
+
+Sense::metric('orders.paid');                 // count something
+Sense::metric('checkout.total_cents', 15990); // or measure it
+```
+
+Sense keeps the count, total, average and percentiles of each metric per minute. They show up
+in the performance tab, and an alert rule can watch them ("tell me when fewer than 5 orders are
+paid in 30 minutes"). Keep names stable and never put ids in them.
+
 ### Manual capture
 
 ```php

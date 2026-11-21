@@ -10,6 +10,7 @@ use Serverfy\Sense\Client\SenseClient;
  * @method static bool captureLog(string $level, string $message, array $context = [], array $extra = [], ?string $channel = null)
  * @method static bool captureSpan(string $type, string $name, float $durationMs, array $meta = [])
  * @method static bool captureTrace(array $trace)
+ * @method static bool metric(string $name, float|int $value = 1)
  * @method static bool flush()
  * @method static int pending()
  * @method static void setTraceContext(?string $traceId, ?string $parentTraceId = null)
